@@ -14,56 +14,51 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install apk-tools
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y apk-tools zstd tar
-
-    - name: Build luci-app-autoreboot.apk (Manual Pack, No SDK Kconfig)
+    - name: Build luci-app-autoreboot.apk (Manual Pack)
       run: |
         set -e
         PKGVER=1.0-1
-        PKGDIR=$(mktemp -d)/pkg
-        mkdir -p "$PKGDIR/etc/config" "$PKGDIR/etc/init.d" "$PKGDIR/usr/lib/lua/luci/controller" "$PKGDIR/usr/lib/lua/luci/model/cbi"
+        ROOT=$(mktemp -d)/pkg
+        mkdir -p "$ROOT/etc/config" "$ROOT/etc/init.d" \
+                 "$ROOT/usr/lib/lua/luci/controller" \
+                 "$ROOT/usr/lib/lua/luci/model/cbi"
 
-        # --- 从仓库 files/ 复制 ---
-        cp files/etc/config/autoreboot      "$PKGDIR/etc/config/autoreboot"      2>/dev/null || true
-        cp files/etc/init.d/autoreboot      "$PKGDIR/etc/init.d/autoreboot"      2>/dev/null || true
-        chmod 755 "$PKGDIR/etc/init.d/autoreboot"
+        # 1) 复制 files/ 里的运行时文件
+        cp files/etc/config/autoreboot "$ROOT/etc/config/autoreboot" 2>/dev/null || true
+        cp files/etc/init.d/autoreboot "$ROOT/etc/init.d/autoreboot" 2>/dev/null || true
+        chmod 755 "$ROOT/etc/init.d/autoreboot"
 
-        # --- LuCI 控制器和 CBI（标准布局）---
-        if [ -f files/usr/lib/lua/luci/controller/autoreboot.lua ]; then
-          cp files/usr/lib/lua/luci/controller/autoreboot.lua "$PKGDIR/usr/lib/lua/luci/controller/autoreboot.lua"
-        fi
-        if [ -f files/usr/lib/lua/luci/model/cbi/autoreboot.lua ]; then
-          cp files/usr/lib/lua/luci/model/cbi/autoreboot.lua "$PKGDIR/usr/lib/lua/luci/model/cbi/autoreboot.lua"
-        fi
+        # 2) LuCI Lua 文件
+        [ -f files/usr/lib/lua/luci/controller/autoreboot.lua ] && \
+          cp files/usr/lib/lua/luci/controller/autoreboot.lua \
+             "$ROOT/usr/lib/lua/luci/controller/autoreboot.lua"
+        [ -f files/usr/lib/lua/luci/model/cbi/autoreboot.lua ] && \
+          cp files/usr/lib/lua/luci/model/cbi/autoreboot.lua \
+             "$ROOT/usr/lib/lua/luci/model/cbi/autoreboot.lua"
 
-        # --- 生成 APK 控制信息 ---
-        mkdir -p /tmp/apkmeta
-        cat > /tmp/apkmeta/control <<EOF
+        # 3) 写 control（OpenWrt apk 控制段）
+        META=$(mktemp -d)
+        cat > "$META/control" <<EOF
         Package: luci-app-autoreboot
         Version: $PKGVER
         Architecture: all
-        Maintainer: Wenjw28 <wenjw28@example.com>
+        Maintainer: Wenjw28
         Depends: luci-base, cron
         Section: luci
         Description: LuCI app for scheduled reboot (MT7987A / OpenWrt 25.x)
         EOF
 
-        # --- 打包 (OpenWrt apk 格式: magic + control.tar.gz + data.tar.gz) ---
-        cd "$PKGDIR"
-        tar -czf /tmp/apkmeta/data.tar.gz .
-        cd /tmp/apkmeta
-        tar -czf control.tar.gz control
-        
-        APK_NAME="luci-app-autoreboot_${PKGVER}_all.apk"
-        printf '!APK\x00' > /tmp/$APK_NAME
-        cat control.tar.gz >> /tmp/$APK_NAME
-        cat /tmp/apkmeta/data.tar.gz >> /tmp/$APK_NAME
+        # 4) 打包：magic(!APK\x00) + control.tar.gz + data.tar.gz
+        tar -czf "$META/control.tar.gz" -C "$META" control
+        tar -czf "$META/data.tar.gz" -C "$ROOT" .
+
+        APK="luci-app-autoreboot_${PKGVER}_all.apk"
+        printf '!APK\x00' > "/tmp/$APK"
+        cat "$META/control.tar.gz" >> "/tmp/$APK"
+        cat "$META/data.tar.gz"   >> "/tmp/$APK"
 
         mkdir -p /tmp/out
-        cp /tmp/$APK_NAME /tmp/out/
+        cp "/tmp/$APK" /tmp/out/
         ls -lh /tmp/out
 
     - name: Upload artifact
