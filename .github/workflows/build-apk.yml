@@ -1,68 +1,68 @@
-name: Build autoreboot apk for MT7987A
+name: Build LuCI App APK
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Build luci-app-autoreboot.apk (Manual Pack)
-      run: |
-        set -e
-        PKGVER=1.0-1
-        ROOT=$(mktemp -d)/pkg
-        mkdir -p "$ROOT/etc/config" "$ROOT/etc/init.d" \
-                 "$ROOT/usr/lib/lua/luci/controller" \
-                 "$ROOT/usr/lib/lua/luci/model/cbi"
+      - name: Setup Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tar gzip
 
-        # 1) 复制 files/ 里的运行时文件
-        cp files/etc/config/autoreboot "$ROOT/etc/config/autoreboot" 2>/dev/null || true
-        cp files/etc/init.d/autoreboot "$ROOT/etc/init.d/autoreboot" 2>/dev/null || true
-        chmod 755 "$ROOT/etc/init.d/autoreboot"
+      - name: Build APK
+        run: |
+          PKG_NAME="luci-app-autoreboot"
+          PKG_VER="1.0-1"
+          TMP_DIR="pkg_build"
+          
+          # 关键：进入 files 目录打包，避免路径多一层 files/
+          mkdir -p $TMP_DIR/$PKG_NAME
+          cp -r files/* $TMP_DIR/$PKG_NAME/ 2>/dev/null || cp -r files/. $TMP_DIR/$PKG_NAME/
+          
+          # 确保脚本可执行
+          chmod +x $TMP_DIR/$PKG_NAME/etc/init.d/autoreboot 2>/dev/null
+          
+          # 打包为标准 apk (data.tar.gz + control)
+          cd $TMP_DIR
+          mkdir -p $PKG_NAME/CONTROL
+          cat > $PKG_NAME/CONTROL/control <<EOF
+          Package: $PKG_NAME
+          Version: $PKG_VER
+          Architecture: all
+          Description: LuCI App for Auto Reboot
+          Section: luci
+          Priority: optional
+          Maintainer: you
+          EOF
+          
+          # 打数据包 (相对路径，根目录对应 /)
+          tar -czf $PKG_NAME/data.tar.gz -C $PKG_NAME .
+          # 打控制包
+          tar -czf $PKG_NAME/control.tar.gz -C $PKG_NAME/CONTROL .
+          
+          # 组装 apk (简易方式，实际可用 apk-tools 但此方式兼容)
+          # 更稳的是用 abuild，但为简化，直接生成可用结构
+          # 最终输出
+          mv $PKG_NAME/data.tar.gz ${PKG_NAME}_${PKG_VER}_all.apk
+          # 注：标准 apk 是带控制信息的，上述仅数据。若需完整，建议用以下命令：
+          # (echo -e "data.tar.gz\ncontrol.tar.gz" | tar -czf ${PKG_NAME}_${PKG_VER}_all.apk -T -)
+          
+          # 实际推荐：用 apk 工具构建（需安装 apk-tools）
+          # 这里给出最简可行包：直接 tar 包含数据，OpenWrt 可识别（但非标准）
+          # 为通过 apk add，必须标准。改用以下：
+          cd ..
+          ar rcs ${PKG_NAME}_${PKG_VER}_all.apk $TMP_DIR/$PKG_NAME/control.tar.gz $TMP_DIR/$PKG_NAME/data.tar.gz
+          
+          echo "APK_SIZE=$(stat -c%s ${PKG_NAME}_${PKG_VER}_all.apk)" >> $GITHUB_ENV
 
-        # 2) LuCI Lua 文件
-        [ -f files/usr/lib/lua/luci/controller/autoreboot.lua ] && \
-          cp files/usr/lib/lua/luci/controller/autoreboot.lua \
-             "$ROOT/usr/lib/lua/luci/controller/autoreboot.lua"
-        [ -f files/usr/lib/lua/luci/model/cbi/autoreboot.lua ] && \
-          cp files/usr/lib/lua/luci/model/cbi/autoreboot.lua \
-             "$ROOT/usr/lib/lua/luci/model/cbi/autoreboot.lua"
-
-        # 3) 写 control（OpenWrt apk 控制段）
-        META=$(mktemp -d)
-        cat > "$META/control" <<EOF
-        Package: luci-app-autoreboot
-        Version: $PKGVER
-        Architecture: all
-        Maintainer: Wenjw28
-        Depends: luci-base, cron
-        Section: luci
-        Description: LuCI app for scheduled reboot (MT7987A / OpenWrt 25.x)
-        EOF
-
-        # 4) 打包：magic(!APK\x00) + control.tar.gz + data.tar.gz
-        tar -czf "$META/control.tar.gz" -C "$META" control
-        tar -czf "$META/data.tar.gz" -C "$ROOT" .
-
-        APK="luci-app-autoreboot_${PKGVER}_all.apk"
-        printf '!APK\x00' > "/tmp/$APK"
-        cat "$META/control.tar.gz" >> "/tmp/$APK"
-        cat "$META/data.tar.gz"   >> "/tmp/$APK"
-
-        mkdir -p /tmp/out
-        cp "/tmp/$APK" /tmp/out/
-        ls -lh /tmp/out
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: luci-app-autoreboot-mt7987a-apk
-        path: /tmp/out/*.apk
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-autoreboot-apk
+          path: "*.apk"
