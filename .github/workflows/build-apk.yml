@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
-
+    
     - name: Prepare SDK
       run: |
         SDK_URL="https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/openwrt-sdk-25.12.5-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
@@ -27,40 +27,40 @@ jobs:
         mkdir -p "$SDK/package/luci-app-autoreboot"
         cp -r Makefile files "$SDK/package/luci-app-autoreboot/"
         echo "--- 已复制内容 ---"
-        ls -la "$SDK/package/luci-app-autoreboot/"
+        ls -R "$SDK/package/luci-app-autoreboot"
 
     - name: Build
       run: |
         cd "$SDK"
 
-        # 1) 修 feeds 死 commit
+        # 1) 修复 luci feed 死 commit
         sed -i 's|git.openwrt.org/project/luci.git\^[0-9a-f]*|git.openwrt.org/project/luci.git;openwrt-25.12|' feeds.conf.default
-        ./scripts/feeds update luci
-        ./scripts/feeds install luci-base luci-mod-admin-full luci-theme-bootstrap
 
-        # 2) 最小配置 —— 关键：不开 MULTI_PROFILE，单包才能生成 compile 目标
+        # 2) 全量更新所有 feed（base/packages/luci），解决依赖缺失
+        ./scripts/feeds update -a
+
+        # 3) 安装所有 feed 包，确保 rpcd/libucode/libubox/lua 等底层依赖存在
+        ./scripts/feeds install -a
+
+        # 4) 最小配置：只锁 target + 单包，其余交给 defconfig
         rm -f .config .config.old
         cat > .config <<'EOF'
         CONFIG_TARGET_mediatek=y
         CONFIG_TARGET_mediatek_filogic=y
         CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_generic=y
-        CONFIG_PACKAGE_luci-base=y
-        CONFIG_PACKAGE_luci-mod-admin-full=y
-        CONFIG_PACKAGE_luci-theme-bootstrap=y
         CONFIG_PACKAGE_luci-app-autoreboot=y
         CONFIG_USE_APK=y
         EOF
 
-        # 3) 展开配置（不要用 menuconfig，CI 无终端）
+        # 5) 展开配置（无头环境安全，无 menuconfig）
         make defconfig
 
-        # 4) 调试：确认包确实被选入
-        echo "--- .config 关键项 ---"
-        grep -E 'luci-app-autoreboot|luci-base|USE_APK' .config || true
+        # 6) 调试：确认包确实被选入
+        echo "=== 验证包是否被选中 ==="
+        grep -E 'luci-app-autoreboot|luci-base|libucode|rpcd|USE_APK' .config || true
 
-        # 5) 编译（先扫一遍包目录，确认目标存在）
-        echo "--- 包目录内容 ---"
-        ls package/luci-app-autoreboot/ || true
+        # 7) 编译单包（纯 Lua 约 20~40 秒）
+        echo "=== 开始编译 ==="
         make package/luci-app-autoreboot/compile -j$(nproc) V=s
 
     - name: Collect apk
@@ -68,7 +68,7 @@ jobs:
         mkdir -p /tmp/out
         find "$SDK/bin/" -name 'luci-app-autoreboot*.apk' -exec cp {} /tmp/out/ \;
         echo "--- 产物 ---"
-        ls -lh /tmp/out || echo "未找到 apk"
+        ls -lh /tmp/out 2>/dev/null || echo "未找到 apk"
 
     - name: Upload artifact
       if: always()
