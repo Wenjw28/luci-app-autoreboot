@@ -1,58 +1,80 @@
-name: Build LuCI App APK
+name: Build OpenWrt APK v3 (luci-app-autoreboot)
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: alpine:3.20
     steps:
+      - name: Install build tools
+        run: |
+          apk add --no-cache apk-tools tar bash
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Environment
-        run: sudo apt-get update && sudo apt-get install -y binutils
-
-      - name: Build APK
+      - name: Prepare package tree
         run: |
-          PKG_NAME="luci-app-autoreboot"
-          PKG_VER="1.0-1"
-          OUT_DIR="$PWD/out"
-          BUILD_DIR="$PWD/pkg_build"
-          
-          mkdir -p "$OUT_DIR" "$BUILD_DIR"
-          
-          # 1. 复制文件（确保仓库根目录有 files/，且下面是 etc/, usr/）
-          cp -r files/* "$BUILD_DIR/" 2>/dev/null || cp -r files/. "$BUILD_DIR/"
-          
-          # 2. 创建 CONTROL（注意：apk-tools v3 建议 Architecture 为 noarch）
-          mkdir -p "$BUILD_DIR/CONTROL"
-          cat > "$BUILD_DIR/CONTROL/control" <<EOF
-          Package: $PKG_NAME
-          Version: $PKG_VER
-          Architecture: noarch
-          Description: LuCI App for Auto Reboot
-          Section: luci
-          Priority: optional
-          Maintainer: you
-          EOF
-          
-          # 3. 打包（输出到 OUT_DIR，不在 BUILD_DIR 内打包自身，修复 tar 冲突）
-          tar -czf "$OUT_DIR/data.tar.gz" -C "$BUILD_DIR" etc usr 2>/dev/null || tar -czf "$OUT_DIR/data.tar.gz" -C "$BUILD_DIR" .
-          tar -czf "$OUT_DIR/control.tar.gz" -C "$BUILD_DIR/CONTROL" .
-          
-          # 4. 组装标准 APK（使用 ar）
-          cd "$OUT_DIR"
-          ar rcs "${PKG_NAME}_${PKG_VER}_all.apk" control.tar.gz data.tar.gz
-          
-          # 清理中间文件
-          rm -f control.tar.gz data.tar.gz
-          echo "APK_FILE=${PKG_NAME}_${PKG_VER}_all.apk" >> $GITHUB_ENV
+          set -e
+          PKG=luci-app-autoreboot
+          VER=1.0-r1
+          ARCH=noarch
 
-      - name: Upload Artifact
+          # 构建根：把 files/ 下的 etc/ usr/ 铺到根
+          mkdir -p /tmp/pkg
+          if [ -d files ]; then
+            cp -r files/. /tmp/pkg/
+          else
+            echo "ERROR: files/ directory missing" >&2
+            exit 1
+          fi
+
+          # 确保 init.d 脚本可执行
+          [ -f /tmp/pkg/etc/init.d/autoreboot ] && chmod 755 /tmp/pkg/etc/init.d/autoreboot
+
+          # 创建 APK v3 必需的 .PKGINFO（不是 control！）
+          mkdir -p /tmp/pkginfo
+          cat > /tmp/pkginfo/.PKGINFO <<EOF
+          pkgname = ${PKG}
+          pkgver = ${VER}
+          pkgdesc = LuCI app for scheduled reboot
+          arch = ${ARCH}
+          section = luci
+          maintainer = Wenjw28
+          depend = luci-base
+          depend = cron
+          EOF
+
+          # 列出将要打包的文件，供 mkpkg 使用
+          (cd /tmp/pkg && find . -type f -o -type l | sed 's|^\./||' | sort) > /tmp/manifest
+
+      - name: Build APK with apk mkpkg (v3 ADB format)
+        run: |
+          set -e
+          PKG=luci-app-autoreboot
+          VER=1.0-r1
+          ARCH=noarch
+          OUT=/tmp/out
+          mkdir -p "$OUT"
+
+          # apk mkpkg 语法（apk-tools >= 2.14，Alpine 3.20 自带）
+          # --info 从 .PKGINFO 读，--files 指定文件树根
+          apk mkpkg \
+            --info /tmp/pkginfo/.PKGINFO \
+            --files /tmp/pkg \
+            --output "$OUT/${PKG}_${VER}_${ARCH}.apk"
+
+          ls -lh "$OUT"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: luci-app-autoreboot-apk
-          path: "out/*.apk"
+          name: luci-app-autoreboot-openwrt-apk
+          path: /tmp/out/*.apk
