@@ -1,37 +1,18 @@
-name: Build LuCI App APK
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tar gzip
-
       - name: Build APK
         run: |
           PKG_NAME="luci-app-autoreboot"
           PKG_VER="1.0-1"
-          TMP_DIR="pkg_build"
+          OUT_DIR="$PWD/out"
+          BUILD_DIR="$PWD/pkg_build"
           
-          # 关键：进入 files 目录打包，避免路径多一层 files/
-          mkdir -p $TMP_DIR/$PKG_NAME
-          cp -r files/* $TMP_DIR/$PKG_NAME/ 2>/dev/null || cp -r files/. $TMP_DIR/$PKG_NAME/
+          mkdir -p "$OUT_DIR" "$BUILD_DIR"
           
-          # 确保脚本可执行
-          chmod +x $TMP_DIR/$PKG_NAME/etc/init.d/autoreboot 2>/dev/null
+          # 1. 复制文件到构建目录（确保 files/ 下是 etc/, usr/ 等）
+          cp -r files/* "$BUILD_DIR/" 2>/dev/null || cp -r files/. "$BUILD_DIR/"
           
-          # 打包为标准 apk (data.tar.gz + control)
-          cd $TMP_DIR
-          mkdir -p $PKG_NAME/CONTROL
-          cat > $PKG_NAME/CONTROL/control <<EOF
+          # 2. 创建 CONTROL 目录（APK 必需）
+          mkdir -p "$BUILD_DIR/CONTROL"
+          cat > "$BUILD_DIR/CONTROL/control" <<EOF
           Package: $PKG_NAME
           Version: $PKG_VER
           Architecture: all
@@ -41,28 +22,22 @@ jobs:
           Maintainer: you
           EOF
           
-          # 打数据包 (相对路径，根目录对应 /)
-          tar -czf $PKG_NAME/data.tar.gz -C $PKG_NAME .
-          # 打控制包
-          tar -czf $PKG_NAME/control.tar.gz -C $PKG_NAME/CONTROL .
+          # 3. 分别打包数据和控制（关键：输出到 OUT_DIR，不在 BUILD_DIR 内打包自身）
+          tar -czf "$OUT_DIR/data.tar.gz" -C "$BUILD_DIR" etc usr 2>/dev/null || tar -czf "$OUT_DIR/data.tar.gz" -C "$BUILD_DIR" .
+          tar -czf "$OUT_DIR/control.tar.gz" -C "$BUILD_DIR/CONTROL" .
           
-          # 组装 apk (简易方式，实际可用 apk-tools 但此方式兼容)
-          # 更稳的是用 abuild，但为简化，直接生成可用结构
-          # 最终输出
-          mv $PKG_NAME/data.tar.gz ${PKG_NAME}_${PKG_VER}_all.apk
-          # 注：标准 apk 是带控制信息的，上述仅数据。若需完整，建议用以下命令：
-          # (echo -e "data.tar.gz\ncontrol.tar.gz" | tar -czf ${PKG_NAME}_${PKG_VER}_all.apk -T -)
+          # 4. 组装标准 APK（使用 ar 命令，通常 runner 自带 binutils）
+          # 注意：OpenWrt apk 本质是带特定结构的 tar/gar，此处用标准 deb 风格兼容，实际 apk-tools 识别即可
+          # 更稳妥：直接打成一个整体 tar（若路由器 apk 工具支持），或如下：
+          cd "$OUT_DIR"
+          ar rcs "${PKG_NAME}_${PKG_VER}_all.apk" control.tar.gz data.tar.gz
           
-          # 实际推荐：用 apk 工具构建（需安装 apk-tools）
-          # 这里给出最简可行包：直接 tar 包含数据，OpenWrt 可识别（但非标准）
-          # 为通过 apk add，必须标准。改用以下：
-          cd ..
-          ar rcs ${PKG_NAME}_${PKG_VER}_all.apk $TMP_DIR/$PKG_NAME/control.tar.gz $TMP_DIR/$PKG_NAME/data.tar.gz
-          
-          echo "APK_SIZE=$(stat -c%s ${PKG_NAME}_${PKG_VER}_all.apk)" >> $GITHUB_ENV
+          # 清理中间文件，只留最终 apk
+          rm -f control.tar.gz data.tar.gz
+          echo "APK_FILE=${PKG_NAME}_${PKG_VER}_all.apk" >> $GITHUB_ENV
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-autoreboot-apk
-          path: "*.apk"
+          path: "out/*.apk"
