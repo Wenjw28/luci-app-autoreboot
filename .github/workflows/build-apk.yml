@@ -1,8 +1,9 @@
 name: Build autoreboot apk for MT7987A
+
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,66 +13,60 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Prepare SDK
+
+    - name: Install apk-tools
       run: |
-        SDK_URL="https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/openwrt-sdk-25.12.5-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
-        wget -q "$SDK_URL" -O sdk.tar.zst
-        tar --zstd -xf sdk.tar.zst
-        SDK=$(ls -d openwrt-sdk-* | head -n1)
-        echo "SDK=$SDK" >> $GITHUB_ENV
-        echo "SDK 路径: $SDK"
+        sudo apt-get update -qq
+        sudo apt-get install -y apk-tools zstd tar
 
-    - name: Stage package
+    - name: Build luci-app-autoreboot.apk (Manual Pack, No SDK Kconfig)
       run: |
-        mkdir -p "$SDK/package/luci-app-autoreboot"
-        cp -r Makefile files "$SDK/package/luci-app-autoreboot/"
-        echo "--- 已复制内容 ---"
-        ls -R "$SDK/package/luci-app-autoreboot"
+        set -e
+        PKGVER=1.0-1
+        PKGDIR=$(mktemp -d)/pkg
+        mkdir -p "$PKGDIR/etc/config" "$PKGDIR/etc/init.d" "$PKGDIR/usr/lib/lua/luci/controller" "$PKGDIR/usr/lib/lua/luci/model/cbi"
 
-    - name: Build
-      run: |
-        cd "$SDK"
+        # --- 从仓库 files/ 复制 ---
+        cp files/etc/config/autoreboot      "$PKGDIR/etc/config/autoreboot"      2>/dev/null || true
+        cp files/etc/init.d/autoreboot      "$PKGDIR/etc/init.d/autoreboot"      2>/dev/null || true
+        chmod 755 "$PKGDIR/etc/init.d/autoreboot"
 
-        # 1) 修复 luci feed 死 commit
-        sed -i 's|git.openwrt.org/project/luci.git\^[0-9a-f]*|git.openwrt.org/project/luci.git;openwrt-25.12|' feeds.conf.default
+        # --- LuCI 控制器和 CBI（标准布局）---
+        if [ -f files/usr/lib/lua/luci/controller/autoreboot.lua ]; then
+          cp files/usr/lib/lua/luci/controller/autoreboot.lua "$PKGDIR/usr/lib/lua/luci/controller/autoreboot.lua"
+        fi
+        if [ -f files/usr/lib/lua/luci/model/cbi/autoreboot.lua ]; then
+          cp files/usr/lib/lua/luci/model/cbi/autoreboot.lua "$PKGDIR/usr/lib/lua/luci/model/cbi/autoreboot.lua"
+        fi
 
-        # 2) 全量更新所有 feed（base/packages/luci），解决依赖缺失
-        ./scripts/feeds update -a
-
-        # 3) 安装所有 feed 包，确保 rpcd/libucode/libubox/lua 等底层依赖存在
-        ./scripts/feeds install -a
-
-        # 4) 最小配置：只锁 target + 单包，其余交给 defconfig
-        rm -f .config .config.old
-        cat > .config <<'EOF'
-        CONFIG_TARGET_mediatek=y
-        CONFIG_TARGET_mediatek_filogic=y
-        CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_generic=y
-        CONFIG_PACKAGE_luci-app-autoreboot=y
-        CONFIG_USE_APK=y
+        # --- 生成 APK 控制信息 ---
+        mkdir -p /tmp/apkmeta
+        cat > /tmp/apkmeta/control <<EOF
+        Package: luci-app-autoreboot
+        Version: $PKGVER
+        Architecture: all
+        Maintainer: Wenjw28 <wenjw28@example.com>
+        Depends: luci-base, cron
+        Section: luci
+        Description: LuCI app for scheduled reboot (MT7987A / OpenWrt 25.x)
         EOF
 
-        # 5) 展开配置（无头环境安全，无 menuconfig）
-        make defconfig
+        # --- 打包 (OpenWrt apk 格式: magic + control.tar.gz + data.tar.gz) ---
+        cd "$PKGDIR"
+        tar -czf /tmp/apkmeta/data.tar.gz .
+        cd /tmp/apkmeta
+        tar -czf control.tar.gz control
+        
+        APK_NAME="luci-app-autoreboot_${PKGVER}_all.apk"
+        printf '!APK\x00' > /tmp/$APK_NAME
+        cat control.tar.gz >> /tmp/$APK_NAME
+        cat /tmp/apkmeta/data.tar.gz >> /tmp/$APK_NAME
 
-        # 6) 调试：确认包确实被选入
-        echo "=== 验证包是否被选中 ==="
-        grep -E 'luci-app-autoreboot|luci-base|libucode|rpcd|USE_APK' .config || true
-
-        # 7) 编译单包（纯 Lua 约 20~40 秒）
-        echo "=== 开始编译 ==="
-        make package/luci-app-autoreboot/compile -j$(nproc) V=s
-
-    - name: Collect apk
-      run: |
         mkdir -p /tmp/out
-        find "$SDK/bin/" -name 'luci-app-autoreboot*.apk' -exec cp {} /tmp/out/ \;
-        echo "--- 产物 ---"
-        ls -lh /tmp/out 2>/dev/null || echo "未找到 apk"
+        cp /tmp/$APK_NAME /tmp/out/
+        ls -lh /tmp/out
 
     - name: Upload artifact
-      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: luci-app-autoreboot-mt7987a-apk
