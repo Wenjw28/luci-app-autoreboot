@@ -29,9 +29,9 @@ jobs:
     - name: Build
       run: |
         cd "$SDK"
+        # 仅修复 luci 分支，不碰其他 feeds
         sed -i 's|git.openwrt.org/project/luci.git\^[0-9a-f]*|git.openwrt.org/project/luci.git;openwrt-25.12|' feeds.conf.default
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a -p luci
+        ./scripts/feeds update luci
         ./scripts/feeds install luci-base luci-mod-admin-full luci-theme-bootstrap
         cat >> .config <<EOF
         CONFIG_PACKAGE_luci-app-autoreboot=m
