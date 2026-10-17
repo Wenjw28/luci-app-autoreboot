@@ -1,78 +1,52 @@
-name: Build LuCI App APK (OpenWrt v3 ADB)
+name: Build Real OpenWrt APK v3
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: alpine:3.20  # 必须用 Alpine，自带合规 apk-tools
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare package tree
+      - name: Install tools
+        run: apk add --no-cache tar bash
+
+      - name: Prepare & Build APK v3 (ADB)
         run: |
           set -e
-          PKG_NAME="luci-app-autoreboot"
-          PKG_VER="1.0-r1"
-          ARCH="noarch"
-          BUILD_DIR="/tmp/pkg_build"
-          OUT_DIR="/tmp/out"
-          
-          rm -rf "$BUILD_DIR" "$OUT_DIR"
-          mkdir -p "$BUILD_DIR" "$OUT_DIR"
-          
-          # 复制仓库里的 files/ 内容（必须包含 etc/, usr/）
-          cp -r files/* "$BUILD_DIR/" 2>/dev/null || cp -r files/. "$BUILD_DIR/"
-          
-          # 创建 .PKGINFO（APK v3 核心元数据，格式必须严格）
-          cat > "$BUILD_DIR/.PKGINFO" <<EOF
-          pkgname = $PKG_NAME
-          pkgver = $PKG_VER
+          PKG=luci-app-autoreboot
+          VER=1.0-r1
+          ARCH=noarch
+          OUT=/tmp/out
+          BUILD=/tmp/pkg
+          mkdir -p "$OUT" "$BUILD"
+
+          # 复制文件（假设仓库根目录有 files/）
+          cp -r files/* "$BUILD/" 2>/dev/null || cp -r files/. "$BUILD/"
+
+          # 写 .PKGINFO（apk v3 必须）
+          cat > "$BUILD/.PKGINFO" <<EOF
+          pkgname = $PKG
+          pkgver = $VER
           arch = $ARCH
-          pkgdesc = LuCI App for Auto Reboot
+          desc = LuCI App for Auto Reboot
           section = luci
           maintainer = you
           EOF
-          
-          # 如果有安装脚本（可选），放 .post-install 等
-          # cat > "$BUILD_DIR/.post-install" <<'EOF'
-          # #!/bin/sh
-          # rm -rf /tmp/luci-*
-          # EOF
-          # chmod +x "$BUILD_DIR/.post-install"
-          
-          echo "BUILD_DIR=$BUILD_DIR" >> $GITHUB_ENV
-          echo "OUT_DIR=$OUT_DIR" >> $GITHUB_ENV
-          echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
-          echo "PKG_VER=$PKG_VER" >> $GITHUB_ENV
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
 
-      - name: Build APK v3 (ADB format, no mkpkg)
-        run: |
-          set -e
-          BUILD_DIR="$BUILD_DIR"
-          OUT_DIR="$OUT_DIR"
-          
-          # APK v3 = 控制段(.PKGINFO+脚本) + 数据段，均 gzip 压缩
-          # 1. 控制段（仅 .PKGINFO 和可能的脚本）
-          (cd "$BUILD_DIR" && tar -czf "$OUT_DIR/control.tar.gz" .PKGINFO .post-install 2>/dev/null || tar -czf "$OUT_DIR/control.tar.gz" .PKGINFO)
-          
-          # 2. 数据段（实际文件，排除控制文件）
-          (cd "$BUILD_DIR" && tar -czf "$OUT_DIR/data.tar.gz" --exclude='.PKGINFO' --exclude='.post-install' etc usr 2>/dev/null || cd "$BUILD_DIR" && tar -czf "$OUT_DIR/data.tar.gz" --exclude='.PKGINFO' --exclude='.post-install' .)
-          
-          # 3. 拼接成 ADB（APK v3）：控制段在前，数据段在后
-          cat "$OUT_DIR/control.tar.gz" "$OUT_DIR/data.tar.gz" > "$OUT_DIR/${PKG_NAME}_${PKG_VER}_${ARCH}.apk"
-          
-          # 清理中间文件
-          rm -f "$OUT_DIR/control.tar.gz" "$OUT_DIR/data.tar.gz"
-          
-          ls -lh "$OUT_DIR"
+          # 官方工具打真 ADB 格式
+          apk mkpkg \
+            --info "$BUILD/.PKGINFO" \
+            --files "$BUILD" \
+            --output "$OUT/${PKG}_${VER}_${ARCH}.apk"
 
-      - name: Upload artifact
+          ls -lh "$OUT"
+
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: luci-app-autoreboot-openwrt-apk
+          name: luci-app-autoreboot-real-apk
           path: /tmp/out/*.apk
