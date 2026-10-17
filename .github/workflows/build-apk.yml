@@ -1,3 +1,20 @@
+name: Build LuCI App APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Environment
+        run: sudo apt-get update && sudo apt-get install -y binutils
+
       - name: Build APK
         run: |
           PKG_NAME="luci-app-autoreboot"
@@ -7,32 +24,30 @@
           
           mkdir -p "$OUT_DIR" "$BUILD_DIR"
           
-          # 1. 复制文件到构建目录（确保 files/ 下是 etc/, usr/ 等）
+          # 1. 复制文件（确保仓库根目录有 files/，且下面是 etc/, usr/）
           cp -r files/* "$BUILD_DIR/" 2>/dev/null || cp -r files/. "$BUILD_DIR/"
           
-          # 2. 创建 CONTROL 目录（APK 必需）
+          # 2. 创建 CONTROL（注意：apk-tools v3 建议 Architecture 为 noarch）
           mkdir -p "$BUILD_DIR/CONTROL"
           cat > "$BUILD_DIR/CONTROL/control" <<EOF
           Package: $PKG_NAME
           Version: $PKG_VER
-          Architecture: all
+          Architecture: noarch
           Description: LuCI App for Auto Reboot
           Section: luci
           Priority: optional
           Maintainer: you
           EOF
           
-          # 3. 分别打包数据和控制（关键：输出到 OUT_DIR，不在 BUILD_DIR 内打包自身）
+          # 3. 打包（输出到 OUT_DIR，不在 BUILD_DIR 内打包自身，修复 tar 冲突）
           tar -czf "$OUT_DIR/data.tar.gz" -C "$BUILD_DIR" etc usr 2>/dev/null || tar -czf "$OUT_DIR/data.tar.gz" -C "$BUILD_DIR" .
           tar -czf "$OUT_DIR/control.tar.gz" -C "$BUILD_DIR/CONTROL" .
           
-          # 4. 组装标准 APK（使用 ar 命令，通常 runner 自带 binutils）
-          # 注意：OpenWrt apk 本质是带特定结构的 tar/gar，此处用标准 deb 风格兼容，实际 apk-tools 识别即可
-          # 更稳妥：直接打成一个整体 tar（若路由器 apk 工具支持），或如下：
+          # 4. 组装标准 APK（使用 ar）
           cd "$OUT_DIR"
           ar rcs "${PKG_NAME}_${PKG_VER}_all.apk" control.tar.gz data.tar.gz
           
-          # 清理中间文件，只留最终 apk
+          # 清理中间文件
           rm -f control.tar.gz data.tar.gz
           echo "APK_FILE=${PKG_NAME}_${PKG_VER}_all.apk" >> $GITHUB_ENV
 
