@@ -16,7 +16,7 @@ jobs:
 
       - name: Prepare SDK
         run: |
-          SDK_URL="https://downloads.openwrt.org/releases/25.10.0/targets/mediatek/filogic/openwrt-sdk-25.10.0-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
+          SDK_URL="https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/openwrt-sdk-25.10.0-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
           wget -q "$SDK_URL" -O sdk.tar.zst
           tar xf sdk.tar.zst
           SDK=$(ls -d openwrt-sdk-*)
