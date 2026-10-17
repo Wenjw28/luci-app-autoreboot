@@ -24,21 +24,33 @@ jobs:
     - name: Stage package
       run: |
         mkdir -p "$SDK/package/luci-app-autoreboot"
+        # 确保仓库根目录有 files/，否则此行会报错
         cp -r Makefile files "$SDK/package/luci-app-autoreboot/"
         
     - name: Build
       run: |
         cd "$SDK"
-        # 仅修复 luci 分支，不碰其他 feeds
+        # 1. 修复 luci feed 死 commit
         sed -i 's|git.openwrt.org/project/luci.git\^[0-9a-f]*|git.openwrt.org/project/luci.git;openwrt-25.12|' feeds.conf.default
         ./scripts/feeds update luci
         ./scripts/feeds install luci-base luci-mod-admin-full luci-theme-bootstrap
-        cat >> .config <<EOF
+        
+        # 2. 清理旧配置，避免 redefinition 警告和干扰
+        rm -f .config .config.old
+        cat > .config <<EOF
+        CONFIG_TARGET_mediatek_filogic=y
+        CONFIG_PACKAGE_luci-base=y
+        CONFIG_PACKAGE_luci-mod-admin-full=y
+        CONFIG_PACKAGE_luci-theme-bootstrap=y
         CONFIG_PACKAGE_luci-app-autoreboot=m
         CONFIG_USE_APK=y
         CONFIG_LUCI_LANG_zh_Hans=y
         EOF
-        make defconfig
+        
+        # 3. 用 menuconfig 强制刷新依赖树（比 defconfig 更稳）
+        make menuconfig CONFIG_TARGET=mediatek/filogic
+        
+        # 4. 明确编译路径（使用绝对路径更稳）
         make package/luci-app-autoreboot/compile -j$(nproc) V=s
         
     - name: Collect apk
