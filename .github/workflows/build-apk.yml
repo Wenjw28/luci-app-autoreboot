@@ -24,7 +24,7 @@ jobs:
 
       - name: Stage package
         run: |
-          cp -r luci-app-autoreboot "$SDK/package/"
+          cp -r . "$SDK/package/luci-app-autoreboot"
 
       - name: Build
         run: |
