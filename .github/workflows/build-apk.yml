@@ -22,9 +22,10 @@ jobs:
           SDK=$(ls -d openwrt-sdk-*)
           echo "SDK=$SDK" >> "$GITHUB_ENV"
 
-      - name: Stage package
+            - name: Stage package
         run: |
-          cp -r . "$SDK/package/luci-app-autoreboot"
+          mkdir -p "$SDK/package/luci-app-autoreboot"
+          cp -r Makefile files "$SDK/package/luci-app-autoreboot/"
 
       - name: Build
         run: |
