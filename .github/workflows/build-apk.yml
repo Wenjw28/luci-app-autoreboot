@@ -1,5 +1,4 @@
 name: Build autoreboot apk for MT7987A
-
 on:
   workflow_dispatch:
   push:
@@ -22,7 +21,7 @@ jobs:
           SDK=$(ls -d openwrt-sdk-*)
           echo "SDK=$SDK" >> "$GITHUB_ENV"
 
-            - name: Stage package
+      - name: Stage package
         run: |
           mkdir -p "$SDK/package/luci-app-autoreboot"
           cp -r Makefile files "$SDK/package/luci-app-autoreboot/"
@@ -42,7 +41,7 @@ jobs:
       - name: Collect apk
         run: |
           mkdir -p /tmp/out
-          find "$SDK/bin" -name 'luci-app-autoreboot*.apk' -exec cp {} /tmp/out/ \;
+          find "$SDK/bin/" -name 'luci-app-autoreboot*.apk' -exec cp {} /tmp/out/ \;
           ls -lh /tmp/out
 
       - name: Upload artifact
