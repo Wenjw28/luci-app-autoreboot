@@ -1,0 +1,51 @@
+name: Build autoreboot apk for MT7987A
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SDK
+        run: |
+          SDK_URL="https://downloads.openwrt.org/releases/25.10.0/targets/mediatek/filogic/openwrt-sdk-25.10.0-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
+          wget -q "$SDK_URL" -O sdk.tar.zst
+          tar xf sdk.tar.zst
+          SDK=$(ls -d openwrt-sdk-*)
+          echo "SDK=$SDK" >> "$GITHUB_ENV"
+
+      - name: Stage package
+        run: |
+          cp -r luci-app-autoreboot "$SDK/package/"
+
+      - name: Build
+        run: |
+          cd "$SDK"
+          ./scripts/feeds update luci
+          ./scripts/feeds install luci-base
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_luci-app-autoreboot=m
+          CONFIG_USE_APK=y
+          EOF
+          make defconfig
+          make package/luci-app-autoreboot/compile -j$(nproc) V=s
+
+      - name: Collect apk
+        run: |
+          mkdir -p /tmp/out
+          find "$SDK/bin" -name 'luci-app-autoreboot*.apk' -exec cp {} /tmp/out/ \;
+          ls -lh /tmp/out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-autoreboot-mt7987a-apk
+          path: /tmp/out/*.apk
