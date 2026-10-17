@@ -1,0 +1,6 @@
+config autoreboot 'main'
+	option enabled '0'
+	option hour '4'
+	option minute '0'
+	option weekday '*'
+	option delay '10'
